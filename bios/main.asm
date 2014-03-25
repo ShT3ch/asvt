@@ -18,7 +18,7 @@ endStringOut dw 21
 modeShift db 06
 modePage db 18
 
-attributeArray db 00h,00100100b,01101001b,10010010b,00100001b,01000001b,01100001b,01110001b,01000010b,01100010b,01110010b,00110010b,00010100b,00110100b,00100100b,01110100b,01010100b
+attributeArray db 00h,00100100b,11101001b,10010010b,00100001b,01000001b,01100001b,01110001b,01000010b,01100010b,01110010b,00110010b,00010100b,00110100b,00100100b,01110100b,01010100b
 
 widthInVideoMode dw 40,40,80,80,-1,-1,-1,80
 heightInVideoMode dw 25,25,25,25,-1,-1,-1,25
@@ -254,6 +254,19 @@ setVideoMode proc near
 	ret 2
 setVideoMode endp
 
+blinkDisable proc near
+	push ax
+	push bx
+	
+	mov ax, 1003h
+	xor bx, bx
+	int 10h
+
+	pop bx
+	pop ax
+	ret
+endp blinkDisable
+
 setVideoPage proc near
 	arg toPage:word
 	push bp
@@ -283,6 +296,8 @@ main:
 	push fromUserNewPage
 	call setVideoPage
 
+	call blinkDisable
+	
 	call printGrid
 
 	push es
