@@ -13,6 +13,11 @@ currentRow dw 0
 
 lastColor db 00h
 
+OutTemplate db 'MODE: ___   PAGE: ___'
+endStringOut dw 21
+modeShift db 06
+modePage db 18
+
 attributeArray db 00h,00100100b,01101001b,10010010b,00100001b,01000001b,01100001b,01110001b,01000010b,01100010b,01110010b,00110010b,00010100b,00110100b,00100100b,01110100b,01010100b
 
 widthInVideoMode dw 40,40,80,80,-1,-1,-1,80
@@ -280,6 +285,31 @@ main:
 
 	call printGrid
 
+	push es
+	
+		mov ah, 13h
+		
+		mov al, 00000001b
+		mov cx, endStringOut
+		
+		push 0
+		call getAttribute  ;bl <- attr
+		push 0
+		call getAttribute  ;bl <- attr
+		
+		mov bp, currentVideoMode
+		add bp,bp
+		mov dh, 00h
+		mov dl, byte ptr beginColumnIndex[bp]
+		mov bh, byte ptr currentVideoPage
+		
+		push cs
+		pop es
+		
+		lea bp, OutTemplate
+		int 10h
+	pop es
+	
 	xor ax,ax
 	int 16h
 
