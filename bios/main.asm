@@ -6,19 +6,22 @@ org 100h
 start:
 	jmp main
 
-fromUserNewMode dw 03h
-fromUserNewPage dw 03h
+fromUserNewMode dw 07h
+fromUserNewPage dw 02h
 
 currentRow dw 0
 
 lastColor db 00h
 
-OutTemplate db 'MODE: ___   PAGE: ___'
-endStringOut dw 21
-modeShift db 06
-modePage db 18
 
-attributeArray db 00h,00100100b,11101001b,10010010b,00100001b,01000001b,01100001b,01110001b,01000010b,01100010b,01110010b,00110010b,00010100b,00110100b,00100100b,01110100b,01010100b
+endStringOut dw 23
+
+SymTable db '0123456789ABCDEF'
+Buf2Out db 'MODE: ____   PAGE: ____',13,10,'$'
+fPlace dw 6
+sPlace dw 19
+
+attributeArray db 00h,00101100b,11101001b,00011010b,00101001b,01001001b,01101001b,01111001b,01011010b,01101010b,01111010b,00111010b,00011100b,00111100b,00101100b,01111100b,01011100b
 
 widthInVideoMode dw 40,40,80,80,-1,-1,-1,80
 heightInVideoMode dw 25,25,25,25,-1,-1,-1,25
@@ -287,6 +290,84 @@ setVideoPage proc near
 	ret 2
 endp setVideoPage
 
+outAdresForm proc near
+				push bp
+				mov bp, sp
+				push bx
+				push cx
+				
+				;si:di
+				
+				cld
+				
+				lea bx, SymTable
+				
+				lea di,Buf2Out
+				add di, [fPlace]
+				
+				mov dx, [bp+4]
+				
+				mov al,dh
+				shr al,4
+				
+				xlat 
+				stosb
+				
+				mov al,dh
+				and al,0fh
+				
+				xlat 
+				stosb
+				
+				mov al,dl
+				shr al,4
+				
+				xlat 
+				stosb
+				
+				mov al,dl
+				and al,0fh
+				
+				xlat 
+				stosb
+				
+				
+				lea di,Buf2Out
+				add di, [sPlace]
+				mov dx, [bp+6]
+				
+				mov al,dh
+				shr al,4
+				
+				xlat 
+				stosb
+				
+				mov al,dh
+				and al,0fh
+				
+				xlat 
+				stosb
+				
+				mov al,dl
+				shr al,4
+				
+				xlat 
+				stosb
+				
+				mov al,dl
+				and al,0fh
+				
+				xlat 
+				stosb
+				
+								
+				pop cx
+				pop bx
+				pop bp
+
+				ret 4
+outAdresForm endp
+
 main:
 	call saveCurrentModeAndPage
 
@@ -296,12 +377,20 @@ main:
 	push fromUserNewPage
 	call setVideoPage
 
-	call blinkDisable
+	;call blinkDisable
 	
 	call printGrid
 
-	push es
 	
+	push es
+		
+		push cs
+		pop es
+		
+		push currentVideoPage
+		push currentVideoMode
+		call outAdresForm
+		
 		mov ah, 13h
 		
 		mov al, 00000001b
@@ -321,7 +410,7 @@ main:
 		push cs
 		pop es
 		
-		lea bp, OutTemplate
+		lea bp, Buf2Out
 		int 10h
 	pop es
 	
