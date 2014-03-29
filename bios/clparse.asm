@@ -196,7 +196,7 @@ findDescriptionOfCurrentKeyWord proc near
 	cmp [parsingDFA.currentKeyWordIndex], cx ; if lengths differ,
 	jne @@forAlldescriptions_LoopNext
 	cld                     ;increment di after each character
-	repne cmpsb
+	repe cmpsb
 	jne @@forAlldescriptions_LoopNext
 	jmp @@foundDescription
 @@forAlldescriptions_LoopNext:
@@ -415,8 +415,8 @@ endp
 
 
 descriptions:
-asdDescr KeyWordDescription <'asd', 3, ArgType_None>
-asdfDescr KeyWordDescription <'asdf', 4, ArgType_HexNum>
+asdDescr KeyWordDescription <'page', 4, ArgType_None>
+asdfDescr KeyWordDescription <'mode', 4, ArgType_HexNum>
 ololonDescr KeyWordDescription <'ololon', 6, ArgType_HexNum>
 descriptionsSize = ($ - descriptions) / type(KeyWordDescription)
 
