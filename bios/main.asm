@@ -831,10 +831,12 @@ proc parseHexByteFromDescription
 @@twoDigits:
 	mov dl, bx.value[0]
 	call parseHexOct
-	mov ah, dl
+	sal dl, 4
+	mov al, dl
 	mov dl, bx.value[1]
 	call parseHexOct
-	mov al, dl
+	add al, dl
+	mov ah, 0
 	jmp @@end
 @@end:
 	pop dx cx bx bp
