@@ -19,9 +19,12 @@ lastColor db 00h
 endStringOut dw 23
 
 SymTable db '0123456789ABCDEF'
-Buf2Out db 'MODE: ____   PAGE: ____',13,10,'$'
-fPlace dw 6
-sPlace dw 19
+ModeBuf db 'MODE: __'
+PageBuf db 'PAGE: __'
+ModeBeg equ 6
+ModeLen equ 8
+PageBeg equ 6
+PageLen equ 8
 
 attributeArray db 00h,00101100b,11101001b,00011010b,00101001b,01001001b,01101001b,01111001b,01011010b,01101010b,01111010b,00111010b,00011100b,00111100b,00101100b,01111100b,01011100b
 
@@ -49,7 +52,7 @@ printSymbol proc near
 	pushf
 
 	push currentRow
-	call getAttribute ; Теперь в bl лежит байт аттрибута
+	call getAttribute ; bl <- attribute descr byte
 
 	mov ah, 09h
 	mov al, byte ptr symbol
@@ -72,6 +75,13 @@ shift2Right proc near
 	push cx
 	push dx
 	
+	
+	
+	;in: �� = 03
+	;�� = page num
+	;out: DH, DL = cursor current row and col
+	;��, CL = first and last row number
+	
 	mov ah, 03h
 	mov bh, byte ptr currentVideoPage
 	int 10h
@@ -82,10 +92,6 @@ shift2Right proc near
 	mov bh, byte ptr currentVideoPage
 	int 10h
 	
-	;Ввод: АН = 03
-	;ВН = номер страницы
-	;Вывод: DH, DL = строка и столбец текущей позиции курсора
-	;СН, CL = первая и последняя строки курсора
 	pop dx
 	pop cx
 	pop bx
@@ -148,9 +154,9 @@ printGrid proc near
 
 	mov bx, currentVideoMode
 	mov dx, currentRow
-	add bx,bx
-	mov bx, beginRowIndex[bx] ; Начальный y
-	mov cx, 0 ; Начальный символ
+	sal bx, 1
+	mov bx, beginRowIndex[bx] ; initial y
+	mov cx, 0 ; initial character
 
 @@printGridFor:
 	mov currentRow, dx
@@ -159,8 +165,8 @@ printGrid proc near
 	push cx
 	push bx
 	mov bx, currentVideoMode
-	add bx,bx
-	push [beginColumnIndex+bx] ; Начальный x
+	sal bx, 1
+	push [beginColumnIndex+bx] ; initial x
 	call printLine
 	pop bx
 
@@ -292,83 +298,58 @@ setVideoPage proc near
 	ret 2
 endp setVideoPage
 
-outAdresForm proc near
-				push bp
-				mov bp, sp
-				push bx
-				push cx
-				
-				;si:di
-				
-				cld
-				
-				lea bx, SymTable
-				
-				lea di,Buf2Out
-				add di, [fPlace]
-				
-				mov dx, [bp+4]
-				
-				mov al,dh
-				shr al,4
-				
-				xlat 
-				stosb
-				
-				mov al,dh
-				and al,0fh
-				
-				xlat 
-				stosb
-				
-				mov al,dl
-				shr al,4
-				
-				xlat 
-				stosb
-				
-				mov al,dl
-				and al,0fh
-				
-				xlat 
-				stosb
-				
-				
-				lea di,Buf2Out
-				add di, [sPlace]
-				mov dx, [bp+6]
-				
-				mov al,dh
-				shr al,4
-				
-				xlat 
-				stosb
-				
-				mov al,dh
-				and al,0fh
-				
-				xlat 
-				stosb
-				
-				mov al,dl
-				shr al,4
-				
-				xlat 
-				stosb
-				
-				mov al,dl
-				and al,0fh
-				
-				xlat 
-				stosb
-				
-								
-				pop cx
-				pop bx
-				pop bp
+proc printPageAndMode
+	push bx cx dx es bp
+	push cs
+	pop es
+	
+	; prepare buffers to output
+	mov bx, [currentVideoMode]
+	sar bx, 4
+	mov al, SymTable[bx]
+	mov [ModeBuf + ModeBeg], al
+	mov bx, [currentVideoMode]
+	and bx, 0Fh
+	mov al, SymTable[bx]
+	mov [ModeBuf + ModeBeg + 1], al
 
-				ret 4
-outAdresForm endp
+	mov bx, [currentVideoPage]
+	sar bx, 4
+	mov al, SymTable[bx]
+	mov [PageBuf + PageBeg], al
+	mov bx, [currentVideoPage]
+	and bx, 0Fh
+	mov al, SymTable[bx]
+	mov [PageBuf + PageBeg + 1], al
+	
+	
+	mov cx, PageLen
+	
+	mov bp, currentVideoMode
+	sal bp, 1
+	
+	mov dh, 00h
+	
+	mov dl, byte ptr widthInVideoMode[bp]
+	sub dl, PageLen
+	sar dl, 1
+	
+	mov bh, byte ptr currentVideoPage
+	mov bl, 11101001b
+	
+	mov ah, 13h	
+	mov al, 1 ; write mode (ascii)
+	
+	lea bp, [ModeBuf]
+	int 10h
+
+	inc dh
+	lea bp, [PageBuf]
+	int 10h
+	
+	pop bp es dx cx bx
+	ret
+endp
 
 ;====================================begin of command line parser. lasciate ogni speranza voi ch'entrate
 
@@ -886,7 +867,7 @@ endm
 	mov [fromUserNewPage], ax
 	jmp @@ok
 @@badPage:
-	print "Mode must be a one or two-digit hex string."
+	print "Page must be a one or two-digit hex string."
 	jmp @@help
 @@ok:
 	print "Command line is ok"
@@ -906,42 +887,16 @@ main:
 	push fromUserNewPage
 	call setVideoPage
 
-	;call blinkDisable
-	
+	mov ax, [blinkDescr.wasSet]
+	cmp ax, 1
+	je @@enableBlink
+	call blinkDisable
+@@enableBlink:
+
 	call printGrid
 
 	
-	push es
-		
-		push cs
-		pop es
-		
-		push currentVideoPage
-		push currentVideoMode
-		call outAdresForm
-		
-		mov ah, 13h
-		
-		mov al, 00000001b
-		mov cx, endStringOut
-		
-		push 0
-		call getAttribute  ;bl <- attr
-		push 0
-		call getAttribute  ;bl <- attr
-		
-		mov bp, currentVideoMode
-		add bp,bp
-		mov dh, 00h
-		mov dl, byte ptr beginColumnIndex[bp]
-		mov bh, byte ptr currentVideoPage
-		
-		push cs
-		pop es
-		
-		lea bp, Buf2Out
-		int 10h
-	pop es
+	call printPageAndMode
 	
 	xor ax,ax
 	int 16h
