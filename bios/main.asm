@@ -11,12 +11,20 @@ start:
 fromUserNewMode dw 07h
 fromUserNewPage dw 02h
 
+graphicBufferOffset equ 0B800h
+additionalOffsetToCurrentPage equ 004Eh
+currentColumnsNumberOffset equ 004Ah
+pageNumberOffset equ 0062h
+
 currentRow dw 0
 
 lastColor db 00h
 
 
 endStringOut dw 23
+
+rowNumberMem db 0
+columnNumberMem db 0
 
 SymTable db '0123456789ABCDEF'
 ModeBuf db 'MODE: __'
@@ -54,11 +62,53 @@ printSymbol proc near
 	push currentRow
 	call getAttribute ; bl <- attribute descr byte
 
-	mov ah, 09h
-	mov al, byte ptr symbol
-	mov bh, byte ptr currentVideoPage
-	mov cx, 1 ; Repeat factor
-	int 10h
+;	With (predictably) the ADD, SUB, MUL and DIV commands...
+;
+;MOV AL, 1
+;ADD AL, 5 ; AL now = 6
+;SUB AL, 4 ; AL now = 2 
+	push es
+		push 0040h
+		pop es
+		
+		xor ax,ax
+		push bx
+			mov al, rowNumberMem   ;add to di offset to current row
+			mov bx, currentColumnsNumberOffset
+			mov bx, es:[bx]
+			mul bl
+			mov bx,02h
+			mul bx
+			
+			mov di, ax
+			
+			mov bx, additionalOffsetToCurrentPage ; add to DI offset of current page
+			add di,es:[bx]
+			
+		pop bx
+		
+		mov ah, bl
+		mov al, byte ptr symbol
+		
+		xor bx,bx
+		
+		push ax
+			xor ax,ax   ;add to DI offset to current column
+			mov bl, columnNumberMem
+			mov al, bl
+			mov bl,02h
+			mul bl
+			mov bx,ax
+			
+			add di, bx
+		pop ax
+		
+		push graphicBufferOffset
+		pop es
+		
+		mov es:[di], ax
+		
+	pop es
 
 	call shift2Right
 	popf
@@ -74,23 +124,35 @@ shift2Right proc near
 	push bx
 	push cx
 	push dx
+
+	xor ax,ax
+	mov al, columnNumberMem
+	inc ax
 	
+	push es
+	push bx
+		
+		mov bx, 0040h
+		push bx
+		pop es
+		
+		mov bx, currentColumnsNumberOffset
+		cmp ax, es:[bx]
+		jne @@withoutOverflowColumns
+	pop bx
+	pop es
 	
+	xor ax,ax
+	mov al, rowNumberMem
+	inc ax
+	mov  rowNumberMem, al
+	xor ax,ax
 	
-	;in: € = 03
-	;‚ = page num
-	;out: DH, DL = cursor current row and col
-	;‘, CL = first and last row number
+@@withoutOverflowColumns:	
+	mov columnNumberMem, al
 	
-	mov ah, 03h
-	mov bh, byte ptr currentVideoPage
-	int 10h
-	
-	inc dl
-	
-	mov ah, 02h
-	mov bh, byte ptr currentVideoPage
-	int 10h
+	pop bx
+	pop es
 	
 	pop dx
 	pop cx
@@ -110,11 +172,11 @@ printLine proc near
 	push dx
 	pushf
 
-	mov ah, 02h
-	mov bh, byte ptr currentVideoPage
-	mov dh, byte ptr x
-	mov dl, byte ptr y
-	int 10h
+	
+	mov bl,byte ptr x
+	mov rowNumberMem, bl
+		mov bl,byte ptr y
+	mov columnNumberMem, bl
 
 	mov bx, initialSymbol ; Current symbol
 	mov cx, initialSymbol
@@ -204,7 +266,7 @@ endp saveCurrentModeAndPage
 restoreSavedVideoModeAndPage proc near
 	push ax
 	pushf
-	
+	;462
 	push savedVideoMode
 	call setVideoMode
 	
@@ -582,8 +644,8 @@ keyWordTransition proc near
 	cmp ax, 0 ; if not found
 	je @@onError
 	mov [parsingDFA.currentDescription], ax
-	mov bx, [parsingDFA.currentDescription]
-	mov ax, [bx.wasSet] 
+	mov bx, [parsingDFA.currentDescription]   ;what that fuck? Bx or parsingDFA?
+	mov ax, [bx.wasSet] 					; why different? why not parsingDFA?
 	cmp ax, 1 ; if was already set
 	jne @@notAlreadySet
 	print "The key was already set. Ignoring new value if any."
@@ -594,7 +656,7 @@ keyWordTransition proc near
 	sal bx, 1 ; bx indexes double words
 	mov ax, statesOfArgTypes[bx]
 	mov [parsingDFA.currentState], ax
-	mov ax, 0
+	mov ax, 0 ;xor...
 	mov [parsingDFA.currentKeyWordIndex], ax
 	jmp @@transEnd
 @@onError:
@@ -605,7 +667,7 @@ keyWordTransition proc near
 	ret 2
 endp
 
-isValuable proc near
+isValuable proc near    ; 0x4h, for ex? :)
 	arg char:word
 	push bp
 	mov bp, sp
@@ -658,7 +720,7 @@ copyDescriptionFromDFA proc near
 	push bx di si es cx
 	mov bx, [parsingDFA.currentDescription] ; beggining of currentDescription is in bx now
 	mov ax, [bx.valueLength]
-	cmp ax, 0
+	cmp ax, 0 ;test...
 	jne @@alreadySet
 	push cs
 	pop es
@@ -765,7 +827,7 @@ descriptions:
 modeDescr KeyWordDescription <'mode', 4, ArgType_HexNum>
 pageDescr KeyWordDescription <'page', 4, ArgType_HexNum>
 blinkDescr KeyWordDescription <'blink', 5, ArgType_None>
-descriptionsSize = ($ - descriptions) / type(KeyWordDescription)
+descriptionsSize = ($ - descriptions) / type(KeyWordDescription) ; DescriptionsNumber, bleat`
 
 ;====================================end of command line parser. that was tough, wasn't it?
 
