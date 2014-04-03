@@ -902,7 +902,7 @@ proc parseClAndHandleTroubles
 @@notParsed:
 	print "Can't parse some piece of command line."
 @@help:
-	print "TODO: Your help goes here."
+	print "USAGE: -mode <hex> -page <hex> [-blink]"
 	mov ax, 0
 	ret
 @@checkArgs:
