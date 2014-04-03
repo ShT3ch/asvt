@@ -11,10 +11,12 @@ start:
 fromUserNewMode dw 07h
 fromUserNewPage dw 02h
 
-graphicBufferOffset equ 0B800h
-additionalOffsetToCurrentPage equ 004Eh
-currentColumnsNumberOffset equ 004Ah
-pageNumberOffset equ 0062h
+
+BIOS_additionalOffsetToCurrentPage equ 044Eh
+BIOS_currentColumnsNumberOffset equ 044Ah
+BIOS_pageNumberOffset equ 0462h
+BIOS_modeOffset equ 0449h
+BIOS_lastRowNumberOffset equ 0484h
 
 currentRow dw 0
 
@@ -25,6 +27,10 @@ endStringOut dw 23
 
 rowNumberMem db 0
 columnNumberMem db 0
+
+
+promt db 'Gogo any key!'
+promtLength equ 13
 
 SymTable db '0123456789ABCDEF'
 ModeBuf db 'MODE: __'
@@ -50,202 +56,209 @@ currentVideoMode dw 00h
 currentVideoPage dw 00h
 
 
-printSymbol proc near
-	arg symbol:word
-	push bp
-	mov bp, sp
-	push ax
-	push bx
-	push cx
-	pushf
+getVideoPage proc
+	push es bx
 
-	push currentRow
-	call getAttribute ; bl <- attribute descr byte
+	mov ax, 0
+	mov es, ax
+	mov bx, BIOS_pageNumberOffset
+	mov al, byte ptr es:[bx]
 
-;	With (predictably) the ADD, SUB, MUL and DIV commands...
-;
-;MOV AL, 1
-;ADD AL, 5 ; AL now = 6
-;SUB AL, 4 ; AL now = 2 
-	push es
-		push 0040h
-		pop es
-		
-		xor ax,ax
-		push bx
-			mov al, rowNumberMem   ;add to di offset to current row
-			mov bx, currentColumnsNumberOffset
-			mov bx, es:[bx]
-			mul bl
-			mov bx,02h
-			mul bx
-			
-			mov di, ax
-			
-			mov bx, additionalOffsetToCurrentPage ; add to DI offset of current page
-			add di,es:[bx]
-			
-		pop bx
-		
-		mov ah, bl
-		mov al, byte ptr symbol
-		
-		xor bx,bx
-		
-		push ax
-			xor ax,ax   ;add to DI offset to current column
-			mov bl, columnNumberMem
-			mov al, bl
-			mov bl,02h
-			mul bl
-			mov bx,ax
-			
-			add di, bx
-		pop ax
-		
-		push graphicBufferOffset
-		pop es
-		
-		mov es:[di], ax
-		
-	pop es
-
-	call shift2Right
-	popf
-	pop cx
-	pop bx
-	pop ax
-	pop bp
-	ret 2
-printSymbol endp
-
-shift2Right proc near
-	push ax
-	push bx
-	push cx
-	push dx
-
-	xor ax,ax
-	mov al, columnNumberMem
-	inc ax
-	
-	push es
-	push bx
-		
-		mov bx, 0040h
-		push bx
-		pop es
-		
-		mov bx, currentColumnsNumberOffset
-		cmp ax, es:[bx]
-		jne @@withoutOverflowColumns
-	pop bx
-	pop es
-	
-	xor ax,ax
-	mov al, rowNumberMem
-	inc ax
-	mov  rowNumberMem, al
-	xor ax,ax
-	
-@@withoutOverflowColumns:	
-	mov columnNumberMem, al
-	
-	pop bx
-	pop es
-	
-	pop dx
-	pop cx
-	pop bx
-	pop ax
+	pop bx es
 	ret
-endp shift2Right
+endp
+
+getVideoMode proc
+	push es bx
+
+	mov ax, 0
+	mov es, ax
+	mov bx, BIOS_modeOffset
+	mov al, byte ptr es:[bx]
+
+	pop bx es
+	ret
+endp
 
 
-printLine proc near
-	arg  y:word, x:word,initialSymbol:word
+getColumnsCount proc
+	push es bx
+
+	mov ax, 0
+	mov es, ax
+	mov bx, BIOS_currentColumnsNumberOffset
+	mov ax, es:[bx]
+
+	pop bx es
+	ret
+endp
+
+getRowsCount proc
+	push es bx
+
+	mov ax, 0
+	mov es, ax
+	mov bx, BIOS_lastRowNumberOffset
+	mov al, es:[byte ptr bx]
+	inc ax
+
+	pop bx es
+	ret
+endp
+
+
+getAdditionalPageOffset proc
+	push es bx
+
+	mov ax, 0
+	mov es, ax
+	mov bx, BIOS_additionalOffsetToCurrentPage
+	mov ax, es:[bx]
+
+	pop bx es
+	ret
+endp
+
+getGraphicBufferSegment proc
+	call getVideoMode
+	cmp ax, 7
+	je @@mode7
+	jmp @@otherMode
+@@mode7:
+	mov ax, 0B000h
+	ret
+@@otherMode:
+	mov ax, 0B800h
+	ret
+endp
+
+printChar proc
+	arg x:word, y:word, attrsAndChar:word
 	push bp
-	mov bp, sp
-	push ax
-	push bx
-	push cx
-	push dx
-	pushf
+	mov bp,sp
+	push bx cx dx es ax
 
+	call getColumnsCount
+	mov dx, y
+	mul dl ; ax = y * colCount
+	mov dx, x
+	add ax, dx
+	sal ax, 1
+	mov bx, ax
 	
-	mov bl,byte ptr x
-	mov rowNumberMem, bl
-		mov bl,byte ptr y
-	mov columnNumberMem, bl
-
-	mov bx, initialSymbol ; Current symbol
-	mov cx, initialSymbol
-	add cx, 16 ; End symbol
-
-	push bx
-	call printSymbol
-
-@@printLineFor:
-	inc bx
-	cmp bx, cx
-	je @@printLineEndFor
-
-	push ' '
-	call printSymbol
-	push bx
-	call printSymbol
-
-	jmp @@printLineFor
-@@printLineEndFor:
-
-	popf
-	pop dx
-	pop cx
-	pop bx
-	pop ax
-	pop bp
+	call getAdditionalPageOffset
+	add bx, ax
+	
+	call getGraphicBufferSegment
+	mov es, ax
+	
+	mov ax, attrsAndChar
+	mov es:[bx], ax
+	
+	pop ax es dx cx bx bp
 	ret 6
-printLine endp
+endp
 
-printGrid proc near
+printLine proc
+	arg x:word, y:word, strRef:word, len:word, attr:word
+	push bp
+	mov bp,sp
+	push bx cx dx di si ax
+	
+	
+	mov si, x
+	mov di, y
+	
+	mov ax, attr
+	mov ah, al ; attr in ah
+		
+	mov bx, strRef
+	mov cx, len
+	add cx, bx ; cx = the 1st byte after string
+@@loop:
+	mov al, byte ptr [bx]
 	push ax
-	push bx
-	push cx
-	push dx
-	pushf
-
-	mov bx, currentVideoMode
-	mov dx, currentRow
-	sal bx, 1
-	mov bx, beginRowIndex[bx] ; initial y
-	mov cx, 0 ; initial character
-
-@@printGridFor:
-	mov currentRow, dx
-
-	push bx
-	push cx
-	push bx
-	mov bx, currentVideoMode
-	sal bx, 1
-	push [beginColumnIndex+bx] ; initial x
-	call printLine
-	pop bx
-
-	add cx, 16
+	push di
+	push si
+	call printChar
 	inc bx
-	inc dx
+	inc si
+	cmp bx, cx
+	je @@end
+	jmp @@loop
+@@end:
+	pop ax si di dx cx bx bp
+	ret 10
+endp
 
-	cmp dx, 16
-	jne @@printGridFor
-
-	popf
-	pop dx
-	pop cx
-	pop bx
-	pop ax
+printPromt proc
+	mov ax, 00001001b
+	push ax ; attr
+	mov ax, promtLength
+	push ax ; len
+	mov ax, offset promt
+	push ax ; strRef
+	call getRowsCount
+	dec ax
+	push ax ; row
+	mov ax, 0
+	push ax ; col
+	call printLine
 	ret
-printGrid endp
+endp
+
+printGrid proc
+	push ax bx cx dx di si
+	call getColumnsCount
+	sub ax, 16 * 2
+	sar ax, 1
+	mov di, ax  ; di = first col of grid
+	call getRowsCount
+	sub ax, 16
+	sar ax, 1
+	mov si, ax	; si = first row of grid
+	
+	mov cx, 0 ; cx = char code
+@@loop:
+	mov ax, cx
+	and ax, 0Fh ; ax = col num
+	mov dx, cx
+	sar dx, 4 ; dx = row num
+	push dx
+	call getAttribute ; bl = attr
+	mov bh, bl ; i need attr in bh, not bl
+	mov bl, cl
+	
+	sal ax, 1
+	
+	add dx, si
+	add ax, di
+
+	
+	push bx
+	push dx
+	push ax
+	call printChar
+
+	inc cx
+	test cx, 0Fh
+	je @@noSpace
+	inc ax
+	mov bl, ' '
+	push bx
+	push dx
+	push ax
+	call printChar
+@@noSpace:	
+	
+	cmp cx, 100h
+	je @@endLoop
+	jmp @@loop
+@@endLoop:
+	
+	pop si di dx cx bx ax
+	ret
+endp
 
 saveCurrentModeAndPage proc near
 	push ax
@@ -278,6 +291,7 @@ restoreSavedVideoModeAndPage proc near
 	ret
 endp restoreSavedVideoModeAndPage
 
+; returns bl
 getAttribute proc near
 	arg rowNumber:word
 	push bp
@@ -384,31 +398,21 @@ proc printPageAndMode
 	mov al, SymTable[bx]
 	mov [PageBuf + PageBeg + 1], al
 	
-	
-	mov cx, PageLen
-	
-	mov bp, currentVideoMode
-	sal bp, 1
-	
-	mov dh, 00h
-	
-	mov dl, byte ptr widthInVideoMode[bp]
-	sub dl, PageLen
-	sar dl, 1
-	
-	mov bh, byte ptr currentVideoPage
-	mov bl, 11101001b
-	
-	mov ah, 13h	
-	mov al, 1 ; write mode (ascii)
-	
-	lea bp, [ModeBuf]
-	int 10h
-
-	inc dh
-	lea bp, [PageBuf]
-	int 10h
-	
+	mov cx, PageLen ; length
+	mov dh, 0
+	call getColumnsCount
+	mov dx, ax
+	sub dx, PageLen
+	sar dx, 1 ; x of header
+	mov bx, 0 ; y of header
+	mov bp, 00001001b ; attr
+	mov ax, offset ModeBuf ; strRef
+	push bp cx ax bx dx
+	call printLine
+	inc bx
+	mov ax, offset PageBuf
+	push bp cx ax bx dx
+	call printLine
 	pop bp es dx cx bx
 	ret
 endp
@@ -938,6 +942,7 @@ endm
 endp
 
 main:
+	
 	call parseClAndHandleTroubles
 	cmp ax, 0
 	je @@end
@@ -959,7 +964,7 @@ main:
 
 	
 	call printPageAndMode
-	
+	call printPromt
 	xor ax,ax
 	int 16h
 
