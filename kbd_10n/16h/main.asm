@@ -76,7 +76,7 @@ main:
 	int 21h
 	call printLine
 whileNotEscPressed:
-	mov ax, 0
+	mov ax, 1000h
 	int 16h
 	mov cx, ax
 	call printAL
