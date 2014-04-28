@@ -12,16 +12,59 @@ oldInt9Seg dw ?
 oldInt9Off dw ?
 hexAlphabet db "0123456789ABCDEF$"
 
+currentNote db 0
+
+Note_C equ 9121d
+Note_Cs equ 8609d
+Note_D equ 8126d
+Note_Ds equ 7670d
+Note_E equ 7239d
+Note_F equ 6833d
+Note_Fs equ 6449d
+Note_G equ 6087d
+Note_Gs equ 5746d
+Note_A equ 5424d
+Note_B equ 5120d
+Note_H equ 4832d
+Note_C2 equ 4560d
+Note_Cs2 equ 8609d / 2
+Note_D2 equ 8126d / 2
+Note_Ds2 equ 7670d / 2
+Note_E2 equ 7239d / 2
+Note_F2 equ 6833d / 2
+Note_Fs2 equ 6449d / 2
+Note_G2 equ 6087d / 2
+
+
 handleNote macro key, freq
-	local next
+	local next, handleEnd, antiKey
+antiKey equ key + 80h
 	cmp al, key
 	jne next
+	mov [currentNote], al
 	mov bx, freq
 	call playSoundFromBx
 next:
+	cmp al, antiKey
+	jne handleEnd
+	cmp [currentNote], key
+	jne handleEnd
+	call offSound
+	mov [currentNote], 0
+handleEnd:
+	
 endm
 
 wasEscapePressed db 0
+
+offSound proc
+	push ax
+	in      al, 61h
+	and     al, 11111100b
+	out     61h, al
+	pop ax
+	ret
+endp
 
 playSoundFromBx proc
 	push ax bx cx dx
@@ -50,21 +93,31 @@ newInt9 proc far
 	cli
 	in al, 60h
 
-	handleNote 02h, 9121d
-	handleNote 03h, 8611d
-	
-	test al, 80h
-	jnz @@endSound
+	handleNote 10h, Note_C
+	handleNote 03h, Note_Cs
+	handleNote 11h, Note_D
+	handleNote 04h, Note_Ds
+	handleNote 12h, Note_E
+	handleNote 13h, Note_F
+	handleNote 06h, Note_Fs
+	handleNote 14h, Note_G
+	handleNote 07h, Note_Gs
+	handleNote 15h, Note_A
+	handleNote 08h, Note_B
+	handleNote 16h, Note_H
+	handleNote 17h, Note_C2
+	handleNote 0Ah, Note_Cs2
+	handleNote 18h, Note_D2
+	handleNote 0Bh, Note_Ds2
+	handleNote 19h, Note_E2
+	handleNote 1Ah, Note_F2
+	handleNote 0Dh, Note_Fs2
+	handleNote 1Bh, Note_G2	
 	
 	cmp al, 01h
 	je @@escape	
 	jmp @@end
 
-@@endSound:
-	in      al, 61h
-	and     al, 11111100b
-	out     61h, al
-	jmp @@end
 @@escape:
 	mov [wasEscapePressed], 1
 	jmp @@end
@@ -93,6 +146,6 @@ whileIsNotEsc:
 	mov ds, ax
 	mov ax, 2509h
     int 21h
-	
+	call offSound
 	ret
 end start
