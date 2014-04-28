@@ -8,10 +8,26 @@ locals @@ ; from now on each identifier beginning from @@ will only work in the 
 start:
 	jmp main
 
+print macro a
+	local @@start, @@msg
+	push ax dx ds
+	jmp @@start
+@@msg db a, 0Dh, 0Ah,'$'
+@@start:
+	mov ah,9
+	lea dx, @@msg
+	int 21h
+	pop ds dx ax
+endm
+
+	
 oldInt9Seg dw ?
 oldInt9Off dw ?
 hexAlphabet db "0123456789ABCDEF$"
 
+wasEscapePressed db 0
+wasEnterPressed db 0
+isTunePlaying db 0
 currentNote db 0
 
 Note_C equ 9121d
@@ -55,7 +71,6 @@ handleEnd:
 	
 endm
 
-wasEscapePressed db 0
 
 offSound proc
 	push ax
@@ -88,11 +103,75 @@ playSoundFromBx proc
 	ret
 endp
 
+playNote proc ; bx = freq or 0 if silence, cx = length
+	push ax bx cx dx es
+	mov ax, 0
+	mov es, ax
+	add cx, [word ptr es:046Ch]
+	cmp bx, 0
+	je delay
+	call playSoundFromBx
+delay:
+	cmp [word ptr es:046Ch], cx
+	jne delay
+	
+	call offSound
+	
+	pop es dx cx bx ax
+	ret
+endp
+
+playNote_m macro note, len
+	mov bx, note
+	mov cx, len
+	call playNote
+endm
+
+playTune proc
+	push ax bx cx dx
+	mov [isTunePlaying], 1
+	playNote_m Note_C2 4
+	playNote_m Note_H 4
+	playNote_m Note_C2 4
+	playNote_m 0 4
+	playNote_m Note_G 4
+	playNote_m 0 4
+	playNote_m Note_Gs 4
+	playNote_m 0 4
+	playNote_m Note_C2 4
+	playNote_m Note_H 4
+	playNote_m Note_C2 4
+	playNote_m 0 4
+	playNote_m Note_D2 4
+	playNote_m 0 4
+	playNote_m Note_G 4
+	playNote_m 0 4
+	playNote_m Note_C2 4
+	playNote_m Note_H 4
+	playNote_m Note_C2 4
+	playNote_m 0 4
+	playNote_m Note_D2 4
+	playNote_m 0 4
+	playNote_m Note_F 4
+	playNote_m Note_G 4
+	playNote_m Note_Gs 12d
+	playNote_m 0 4
+	playNote_m Note_G 4
+	playNote_m Note_F 4
+	playNote_m Note_Ds 8
+	
+	mov [isTunePlaying], 0
+	pop dx cx bx ax
+	ret
+endp
+
 newInt9 proc far
 	push ax bx
 	cli
 	in al, 60h
-
+	cmp [isTunePlaying], 1
+	je @@checkEscape
+	
 	handleNote 10h, Note_C
 	handleNote 03h, Note_Cs
 	handleNote 11h, Note_D
@@ -113,23 +192,37 @@ newInt9 proc far
 	handleNote 1Ah, Note_F2
 	handleNote 0Dh, Note_Fs2
 	handleNote 1Bh, Note_G2	
-	
-	cmp al, 01h
-	je @@escape	
-	jmp @@end
 
-@@escape:
+@@checkEscape:
+	cmp al, 01h
+	jne @@checkEnter
 	mov [wasEscapePressed], 1
+
+@@checkEnter:
+	cmp al, 1Ch
+	jne @@notEnter
+	mov [wasEnterPressed], 1
+	jmp @@end
+@@notEnter:
+	mov [wasEnterPressed], 0
 	jmp @@end
 @@end:
-	
 	mov al, 20h ;Send EOI (end of interrupt)
 	out 20h, al ; to the 8259A PIC.
 	pop bx ax
 	iret
 endp
 
+help:
+	print "USAGE: plays music:"
+	print "qwertyuiop[]2356790= - these keys mean notes"
+	print "Enter - for sample tune"
+	print "Esc - for exit"
+	ret
 main:
+	cmp [byte ptr cs:80h], 0
+	jne help
+	
 	mov ax, 3509h
 	int 21h
 	mov [oldInt9Seg], es
@@ -138,6 +231,10 @@ main:
     mov dx, offset newInt9
     int 21h
 whileIsNotEsc:
+	cmp [wasEnterPressed], 1
+	jne enterWasNotPressed
+	call playTune
+enterWasNotPressed:
 	cmp [wasEscapePressed], 1
 	jne whileIsNotEsc
 	
