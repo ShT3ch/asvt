@@ -37,12 +37,29 @@ SavedVideoMode db ?
 SavedVideoPage db ?
 Speed dw 1
 
+HelpText1 db 'Arrow keys -> Move directions$'
+HelpText2 db 'Enter -> Pause / Unpause$'
+HelpText3 db '+/- -> Faster / Slower$'
+HelpText4 db '[Press Enter to resume]$'
+
+PauseText1 db 'PAUSED$'
+PauseText2 db '[Press Enter to resume]$'
+PauseText3 db '[Press Escape to leave]$'
+
+EndText1 db 'GAME ENDED$'
+EndText2 db '[Press Enter/Escape to leave]$'
+
 MapSize equ MapHeight * MapWidth
 Map MapObject MapSize dup(<>)
 HeadCoords dw ?
 HeadType dw ?
 GameOver dw 0
-Paused dw 0
+
+Paused_Not equ 0
+Paused_Pause equ 1
+Paused_Help equ 2
+Paused_EndGame equ 3
+Paused dw Paused_Pause
 
 getMapObj proc ; ah = x, al = y  ===> bx = type, cx = expires
 	push ax dx
@@ -62,7 +79,7 @@ getMapObj proc ; ah = x, al = y  ===> bx = type, cx = expires
 	ret
 endp
 
-BoxSize equ (TilePxSize - 2)
+BoxSize equ TilePxSize
 YMultiplier equ (TilePxSize * ScreenPxWidth)
 drawBox proc ; ah = x, al = y, dx = color
 	push ax bx cx dx di si
@@ -76,26 +93,98 @@ drawBox proc ; ah = x, al = y, dx = color
 	mov ah, TilePxSize
 	mul ah
 	add di, ax
-	add di, ScreenPxWidth
-	inc di
 	pop ax ; color
 	mov dx, di ; starting di for stosb
 	mov bx, 0
 @@whileBxLessThanBoxSize:
 	cmp bx, BoxSize
 	jae @@endWhile
+	push ax
+	cmp bx, 0
+	je @@edge
+	cmp bx, (BoxSize - 1)
+	je @@edge
+	jmp @@notEdge
+@@edge:
+	mov ax, 0
+@@notEdge:
 	mov cx, BoxSize
 	mov di, dx
 	cld
 	rep stosb
+	mov ax, 0
+	dec di
+	stosb
+	mov di, dx
+	stosb
 	inc bx
 	add dx, ScreenPxWidth
+	pop ax
 	jmp @@whileBxLessThanBoxSize
 @@endWhile:
 
 	pop si di dx cx bx ax
 	ret
 endp
+
+printLine proc ; bx = word off, dh = y, dl = x
+	push ax bx cx dx
+	push bx
+	mov bx, 0
+	mov ah, 2
+	int 10h
+	pop dx
+	mov ah, 9
+	int 21h
+	pop dx cx bx ax
+	ret
+endp
+
+printHelp proc
+	push ax bx cx dx
+	mov dx, 0206h
+	mov bx, offset HelpText1
+	call printLine
+	inc dh
+	mov bx, offset HelpText2
+	call printLine
+	inc dh
+	mov bx, offset HelpText3
+	call printLine
+	inc dh
+	mov bx, offset HelpText4
+	call printLine
+	pop dx cx bx ax
+	ret
+endp
+
+printPause proc
+	push ax bx cx dx
+	mov dx, 0206h
+	mov bx, offset PauseText1
+	call printLine
+	inc dh
+	mov bx, offset PauseText2
+	call printLine
+	inc dh
+	mov bx, offset PauseText3
+	call printLine
+	pop dx cx bx ax
+	ret
+endp
+
+printEnd proc
+	push ax bx cx dx
+	mov dx, 0206h
+	mov bx, offset EndText1
+	call printLine
+	inc dh
+	mov bx, offset EndText2
+	call printLine
+	pop dx cx bx ax
+	ret
+endp
+
 
 drawMapObj proc ; ah = x, al = y, bx = type, cx = expires
 	push ax bx cx dx
@@ -157,10 +246,10 @@ makeTurn proc
 	call getMapObj
 	call getNextAx
 	call getMapObj
-	push dx
 	mov dx, bx
 	call onCollideWith
-	pop dx
+	cmp [Paused], Paused_EndGame
+	je @@end
 	mov ax, HeadCoords
 	call getMapObj
 	call getNextAx
@@ -169,6 +258,7 @@ makeTurn proc
 	inc cx
 	call setMapObj
 	call decreaseExpirations
+@@end:
 	pop dx cx bx ax
 	ret
 endp
@@ -225,7 +315,6 @@ drawMap proc
 	push ax bx cx dx
 	mov ax, 0A000h
 	mov es, ax
-
 	mov ax, 0
 @@whileAhLessThanWidth:
 	cmp ah, MapWidth
@@ -364,7 +453,7 @@ onCollideWith proc ; ax = who, dx = target type
 	je @@withObstacle3
 	jmp @@end
 @@withUrSelf:
-	mov [GameOver], 1
+	mov [Paused], Paused_EndGame
 	jmp @@end
 @@withFood1:
 	mov dx, 1
@@ -377,13 +466,13 @@ onCollideWith proc ; ax = who, dx = target type
 @@withFood3:
 	jmp @@end
 @@withObstacle1:
-	mov [GameOver], 1
+	mov [Paused], Paused_EndGame
 	jmp @@end
 @@withObstacle2:
-	mov [GameOver], 1
+	mov [Paused], Paused_EndGame
 	jmp @@end
 @@withObstacle3:
-	mov [GameOver], 1
+	mov [Paused], Paused_EndGame
 	jmp @@end
 @@end:
 	pop dx cx bx ax
@@ -441,28 +530,107 @@ restorePageAndMode proc
 endp
 
 newInt9 proc far
-	push ax bx
+	push ax bx cx dx
 	cli
 	in al, 60h
 	cmp al, 1Ch
-	jmp @@ifEnter
+	je @@ifEnter
 	cmp al, 1
-	jmp @@ifEscape
+	je @@ifEscape
+	cmp al, 48h
+	je @@ifUp
+	cmp al, 50h
+	je @@ifDown
+	cmp al, 4Bh
+	je @@ifLeft
+	cmp al, 4Dh
+	je @@ifRight
+	cmp al, 0Dh
+	je @@ifPlus
+	cmp al, 0Ch
+	je @@ifMinus
+	cmp al, 3Bh
+	je @@ifF1
 	jmp @@end
 @@ifEnter:
-	mov ax, [Paused]
-	not ax
-	mov [Paused], ax
+	cmp [Paused], Paused_Not
+	je @@pause
+	cmp [Paused], Paused_Pause
+	je @@unPause
+	cmp [Paused], Paused_Help
+	je @@unPause
+	cmp [Paused], Paused_EndGame
+	je @@exitGame
+@@unPause:
+	mov [Paused], Paused_Not
+	jmp @@end
+@@pause:
+	mov [Paused], Paused_Pause
+	jmp @@end
+@@exitGame:
+	mov [GameOver], 1
 	jmp @@end
 @@ifEscape:
-	mov [GameOver], 1
+	cmp [Paused], Paused_Pause
+	je @@exitGame
+	cmp [Paused], Paused_EndGame
+	je @@exitGame
+	jmp @@end	
+@@ifUp:
+	mov bx, [HeadType]
+	cmp bx, MapObjectType_SnakePartDown
+	je @@end
+	mov ax, [HeadCoords]
+	call getMapObj
+	mov bx, MapObjectType_SnakePartUp
+	call setMapObj
+	jmp @@end
+@@ifDown:
+	mov bx, [HeadType]
+	cmp bx, MapObjectType_SnakePartUp
+	je @@end
+	mov ax, [HeadCoords]
+	call getMapObj
+	mov bx, MapObjectType_SnakePartDown
+	call setMapObj
+	jmp @@end
+@@ifLeft:
+	mov bx, [HeadType]
+	cmp bx, MapObjectType_SnakePartRight
+	je @@end
+	mov ax, [HeadCoords]
+	call getMapObj
+	mov bx, MapObjectType_SnakePartLeft
+	call setMapObj
+	jmp @@end
+@@ifRight:
+	mov bx, [HeadType]
+	cmp bx, MapObjectType_SnakePartLeft
+	je @@end
+	mov ax, [HeadCoords]
+	call getMapObj
+	mov bx, MapObjectType_SnakePartRight
+	call setMapObj
+	jmp @@end
+@@ifMinus:
+	inc [Speed]
+	jmp @@end
+@@ifPlus:
+	cmp [Speed], 1
+	je @@end
+	dec [Speed]
+	jmp @@end
+@@ifF1:
+	mov [Paused], Paused_Help
 	jmp @@end
 @@end:
 	mov al, 20h ;Send EOI (end of interrupt)
 	out 20h, al ; to the 8259A PIC.
-	pop bx ax
+	pop dx cx bx ax
 	iret
 endp
+
+
 
 
 oldInt9Seg dw ?
@@ -480,25 +648,41 @@ main:
     int 21h
 	mov ax, 13h
 	int 10h
-	mov dx, 0212h
 	call drawMap
 @@loop:
-	push es
 	mov ax, 0
 	mov es, ax
 	mov cx, [Speed]
 	add cx, [word ptr es:046Ch]
 @@wait:
+	cmp [GameOver], 1
+	je @@endLoop
+	hlt
 	cmp cx, [word ptr es:046Ch]
 	jne @@wait
-	pop es
-	cmp [Paused], 1
-	je @@paused
+	cmp [Paused], Paused_Not
+	jne @@paused
 	call makeTurn
 	call drawMap
+	jmp @@loop
 @@paused:
-	cmp [GameOver], 1
-	jne @@loop
+	cmp [Paused], Paused_Help
+	je @@pauseHelp
+	cmp [Paused], Paused_Pause
+	je @@pausePause
+	cmp [Paused], Paused_EndGame
+	je @@pauseEnd
+	jmp @@loop
+@@pauseHelp:
+	call printHelp
+	jmp @@loop
+@@pausePause:
+	call printPause
+	jmp @@loop
+@@pauseEnd:
+	call printEnd
+	jmp @@loop
+@@endLoop:
 	call restorePageAndMode
     mov dx, [oldInt9Off]
 	mov ax, [oldInt9Seg]
