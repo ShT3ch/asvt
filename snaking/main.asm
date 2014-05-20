@@ -20,10 +20,6 @@ MapObjectType_SnakePartRight equ 0A02h
 MapObjectType_SnakePartUp equ 0A03h
 MapObjectType_SnakePartDown equ 0A04h
 
-isBxSnakeObjType macro
-	cmp bh, 0Ah
-endm
-
 Expires_Never equ 0
 
 MapObject struc
@@ -39,13 +35,18 @@ ScreenPxHeight equ 200d
 
 SavedVideoMode db ?
 SavedVideoPage db ?
+Speed dw 1
 
 MapSize equ MapHeight * MapWidth
 Map MapObject MapSize dup(<>)
 HeadCoords dw ?
+HeadType dw ?
+GameOver dw 0
+Paused dw 0
 
 getMapObj proc ; ah = x, al = y  ===> bx = type, cx = expires
 	push ax dx
+	mov dh, 0
 	mov dl, ah
 	mov ah, MapWidth
 	mul ah
@@ -98,34 +99,47 @@ endp
 
 drawMapObj proc ; ah = x, al = y, bx = type, cx = expires
 	push ax bx cx dx
-	isBxSnakeObjType
+	cmp bh, 0Ah
 	jne @@checkIfFood1
-	mov dx, 0ABh
+	mov dx, 00Fh
 	call drawBox
 	jmp @@end
 @@checkIfFood1:
 	cmp bx, MapObjectType_Food1
 	jne @@checkIfFood2
+	mov dx, 00Bh
+	call drawBox
 	jmp @@end
 @@checkIfFood2:
 	cmp bx, MapObjectType_Food2
 	jne @@checkIfFood3
+	mov dx, 02Bh
+	call drawBox
 	jmp @@end
 @@checkIfFood3:
 	cmp bx, MapObjectType_Food3
 	jne @@checkIfObstacle1
+	mov dx, 01Bh
+	call drawBox
 	jmp @@end
 @@checkIfObstacle1:
 	cmp bx, MapObjectType_Obstacle1
 	jne @@checkIfObstacle2
+	mov dx, 00110000b
+	call drawBox
 	jmp @@end
 @@checkIfObstacle2:
 	cmp bx, MapObjectType_Obstacle2
 	jne @@checkIfObstacle3
+	mov dx, 08Fh
+	call drawBox
 	jmp @@end
 @@checkIfObstacle3:
 	cmp bx, MapObjectType_Obstacle3
 	jne @@ifNone
+	mov dx, 02Fh
+	call drawBox
+
 	jmp @@end
 @@ifNone:
 	mov dx, 0
@@ -142,7 +156,16 @@ makeTurn proc
 	mov ax, HeadCoords
 	call getMapObj
 	call getNextAx
+	call getMapObj
+	push dx
+	mov dx, bx
+	call onCollideWith
+	pop dx
+	mov ax, HeadCoords
+	call getMapObj
+	call getNextAx
 	mov HeadCoords, ax
+	mov HeadType, bx
 	inc cx
 	call setMapObj
 	call decreaseExpirations
@@ -183,6 +206,7 @@ endp
 
 setMapObj proc ; ah = x, al = y, bx = type, cx = expires
 	push ax bx cx dx
+	mov dh, 0
 	mov dl, ah
 	mov ah, MapWidth
 	mul ah
@@ -199,6 +223,9 @@ endp
 
 drawMap proc
 	push ax bx cx dx
+	mov ax, 0A000h
+	mov es, ax
+
 	mov ax, 0
 @@whileAhLessThanWidth:
 	cmp ah, MapWidth
@@ -221,6 +248,8 @@ drawMap proc
 	ret
 endp
 
+MaxY equ (MapHeight - 1)
+MaxX equ (MapWidth - 1)
 makeSnake proc
 	push ax bx cx dx
 	mov ax, 0
@@ -232,7 +261,21 @@ makeSnake proc
 	cmp al, MapHeight
 	jae @@endAl
 	mov cx, Expires_Never
+	cmp ah, 0
+	je @@edge
+	cmp ah, MaxX
+	je @@edge
+	cmp al, 0
+	je @@edge
+	cmp al, MaxY
+	je @@edge
+	jmp @@notEdge
+@@edge:
+	mov bx, MapObjectType_Obstacle1
+	jmp @@done
+@@notEdge:
 	mov bx, MapObjectType_None
+@@done:
 	call setMapObj
 @@next:
 	inc al
@@ -240,10 +283,9 @@ makeSnake proc
 @@endAl:
 	inc ah
 	jmp @@whileAhLessThanWidth
-@@endAh:
-
-	
+@@endAh:	
 	mov [HeadCoords], 0907h
+	mov [HeadType], MapObjectType_SnakePartRight
 	mov cx, 4
 @@loop:
 	mov ah, cl
@@ -255,10 +297,99 @@ makeSnake proc
 	jcxz @@end
 	jmp @@loop
 @@end:
+	mov ax, 0B07h
+	mov bx, MapObjectType_Food1
+	mov cx, 9
+	call setMapObj
+	mov ax, 1007h
+	mov bx, MapObjectType_Food2
+	mov cx, 9
+	call setMapObj
+	
 	pop dx cx bx ax
 	ret
 endp
-	
+
+changeSnakeDuration proc ; dx = duration change
+	push ax bx cx dx
+	neg dx
+	mov ax, 0
+@@whileAhLessThanWidth:
+	cmp ah, MapWidth
+	jae @@endAh
+	mov al, 0
+@@whileAlLessThanHeight:
+	cmp al, MapHeight
+	jae @@endAl
+	call getMapObj
+	cmp bh, 0Ah
+	jne @@notSnake
+	cmp cx, dx
+	jle @@remove
+	sub cx, dx
+	call setMapObj
+	jmp @@next
+@@remove:
+	mov bx, MapObjectType_None
+	mov cx, 0
+	call setMapObj
+@@notSnake:
+@@next:
+	inc al
+	jmp @@whileAlLessThanHeight
+@@endAl:
+	inc ah
+	jmp @@whileAhLessThanWidth
+@@endAh:
+
+	pop dx cx bx ax
+	ret
+endp
+
+onCollideWith proc ; ax = who, dx = target type
+	push ax bx cx dx
+	cmp dh, 0Ah
+	je @@withUrSelf
+	cmp dx, MapObjectType_Food1
+	je @@withFood1
+	cmp dx, MapObjectType_Food2
+	je @@withFood2
+	cmp dx, MapObjectType_Food3
+	je @@withFood3
+	cmp dx, MapObjectType_Obstacle1
+	je @@withObstacle1
+	cmp dx, MapObjectType_Obstacle2
+	je @@withObstacle2
+	cmp dx, MapObjectType_Obstacle3
+	je @@withObstacle3
+	jmp @@end
+@@withUrSelf:
+	mov [GameOver], 1
+	jmp @@end
+@@withFood1:
+	mov dx, 1
+	call changeSnakeDuration
+	jmp @@end
+@@withFood2:
+	mov dx, -2
+	call changeSnakeDuration
+	jmp @@end
+@@withFood3:
+	jmp @@end
+@@withObstacle1:
+	mov [GameOver], 1
+	jmp @@end
+@@withObstacle2:
+	mov [GameOver], 1
+	jmp @@end
+@@withObstacle3:
+	mov [GameOver], 1
+	jmp @@end
+@@end:
+	pop dx cx bx ax
+	ret
+endp
+
 savePageAndMode proc
 	push ax bx cx dx	
 	mov ah,0fh
@@ -309,21 +440,70 @@ restorePageAndMode proc
 	ret
 endp
 
+newInt9 proc far
+	push ax bx
+	cli
+	in al, 60h
+	cmp al, 1Ch
+	jmp @@ifEnter
+	cmp al, 1
+	jmp @@ifEscape
+	jmp @@end
+@@ifEnter:
+	mov ax, [Paused]
+	not ax
+	mov [Paused], ax
+	jmp @@end
+@@ifEscape:
+	mov [GameOver], 1
+	jmp @@end
+@@end:
+	mov al, 20h ;Send EOI (end of interrupt)
+	out 20h, al ; to the 8259A PIC.
+	pop bx ax
+	iret
+endp
+
+
+oldInt9Seg dw ?
+oldInt9Off dw ?
+
 main:
-	mov ax, 0A000h
-	mov es, ax
 	call makeSnake
 	call savePageAndMode
+	mov ax, 3509h
+	int 21h
+	mov [oldInt9Seg], es
+    mov [oldInt9Off], bx
+	mov ax, 2509h
+    mov dx, offset newInt9
+    int 21h
 	mov ax, 13h
 	int 10h
+	mov dx, 0212h
 	call drawMap
 @@loop:
+	push es
 	mov ax, 0
-	int 16h
+	mov es, ax
+	mov cx, [Speed]
+	add cx, [word ptr es:046Ch]
+@@wait:
+	cmp cx, [word ptr es:046Ch]
+	jne @@wait
+	pop es
+	cmp [Paused], 1
+	je @@paused
 	call makeTurn
 	call drawMap
-	cmp ah, 1
+@@paused:
+	cmp [GameOver], 1
 	jne @@loop
 	call restorePageAndMode
+    mov dx, [oldInt9Off]
+	mov ax, [oldInt9Seg]
+	mov ds, ax
+	mov ax, 2509h
+    int 21h
 	ret
 end start
